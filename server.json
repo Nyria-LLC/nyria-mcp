@@ -1,0 +1,30 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.Nyria-LLC/nyria",
+  "title": "Nyria",
+  "description": "Send trade alerts from Claude, ChatGPT or Cursor to Nyria Paper or your broker.",
+  "version": "1.0.0",
+  "websiteUrl": "https://nyria.io/signals/mcp",
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://api.nyria.io/mcp",
+      "headers": [
+        {
+          "name": "Authorization",
+          "description": "Bearer token for one Nyria strategy. Copy it from the strategy's Integration tab (MCP).",
+          "value": "Bearer {strategy_token}",
+          "isRequired": true,
+          "isSecret": true,
+          "variables": {
+            "strategy_token": {
+              "description": "The strategy's MCP token from its Integration tab.",
+              "isRequired": true,
+              "isSecret": true
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
