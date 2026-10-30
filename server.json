@@ -2,8 +2,12 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.Nyria-LLC/nyria",
   "title": "Nyria",
-  "description": "Send trade alerts from Claude, ChatGPT or Cursor to Nyria Paper or your broker.",
+  "description": "Send trade alerts from Claude, Cursor or any MCP client to Nyria Paper or your broker.",
   "version": "1.0.0",
+  "repository": {
+    "url": "https://github.com/Nyria-LLC/nyria-mcp",
+    "source": "github"
+  },
   "websiteUrl": "https://nyria.io/signals/mcp",
   "remotes": [
     {
