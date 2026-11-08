@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "nyria": {
+      "url": "https://api.nyria.io/mcp",
+      "headers": {
+        "Authorization": "Bearer YOUR_STRATEGY_TOKEN"
+      }
+    }
+  }
+}
