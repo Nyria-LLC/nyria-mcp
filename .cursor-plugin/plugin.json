@@ -1,0 +1,12 @@
+{
+  "name": "nyria",
+  "version": "1.0.0",
+  "description": "Nyria turns your alerts from TradingView, Discord, Telegram and more into orders at your broker, and other traders can pay to run your strategy.",
+  "author": {
+    "name": "Nyria"
+  },
+  "homepage": "https://nyria.io/signals/mcp",
+  "repository": "https://github.com/Nyria-LLC/nyria-mcp",
+  "keywords": ["mcp", "trading", "alerts", "tradingview", "paper-trading"],
+  "logo": "logo.png"
+}
