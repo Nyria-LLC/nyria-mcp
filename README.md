@@ -1,8 +1,26 @@
 # Nyria MCP server
 
-Send trade alerts from Claude, Cursor or any MCP client to Nyria Paper or your broker. Alert to order, sub-second.
+Nyria's MCP server lets Claude, ChatGPT, Cursor, Claude Code or any other MCP client send trade alerts to a Nyria strategy. A bot on that strategy places each alert as an order at Charles Schwab, Tradier, tastytrade or Alpaca, or fills it on Nyria Paper, the free simulator. Alert to order, sub-second.
 
 Endpoint: `https://api.nyria.io/mcp` (Streamable HTTP, hosted by Nyria, nothing to install)
+
+## Questions
+
+### How do I connect Claude or ChatGPT to my broker?
+
+Connect the broker under Integrations in Nyria: Schwab, Tradier and tastytrade through their own sign-in, Alpaca with an API key. Create a strategy with AI Agent (MCP) as the alert source and copy its MCP server URL from the Integration tab. Add that URL as a custom connector in Claude, or as a custom MCP server in ChatGPT ([step by step](https://nyria.io/guides/mcp-server-for-trading)).
+
+### Can an AI trading agent place real orders?
+
+Yes, when the strategy has a live bot. The agent sends the alert, and the live bot places a real order at its broker, sized by the bot's own Budget per entry. A paper bot only simulates.
+
+### Is there an MCP server for stock trading?
+
+Yes. Nyria runs one at `https://api.nyria.io/mcp`, listed in the official MCP registry as `io.github.Nyria-LLC/nyria`, with one token per strategy. See the [Nyria MCP page](https://nyria.io/signals/mcp).
+
+### Can I let an AI agent trade my Alpaca or Schwab account on paper first?
+
+Yes. Deploy a bot on Nyria Paper, which is free and needs no broker, and let the agent preview and send alerts there. Alpaca also connects with a paper API key. An agent can send a wrong or duplicate alert, so read the paper log before you deploy a second bot on the Alpaca or Schwab account. Nyria can't connect Schwab's paperMoney.
 
 ## Quickstart
 
