@@ -75,6 +75,7 @@ The token works like a password and only reaches that one strategy. Rotate it on
 | `nyria_recent_orders` | Recent orders on the strategy. |
 | `nyria_list_bots` | Your bots with broker, paper or live, and status. |
 | `nyria_strategy_info` | The strategy's name, status, equity type and active bot count. |
+| `nyria_describe_states` | Plain meaning of each status value Nyria returns for bots, strategies, broker connections, orders and plans. |
 
 A live bot turns a sent alert into a real order. Start with a paper bot, and preview before you send.
 
