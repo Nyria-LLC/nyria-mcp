@@ -1,5 +1,7 @@
 # Nyria MCP server
 
+[![M8ven Score](https://m8ven.ai/badge/mcp/nyria-llc-nyria-mcp-1a2wsm?v=d7074a42ff68a3aa9217c2e653a58164)](https://m8ven.ai/mcp/nyria-llc-nyria-mcp-1a2wsm?s=readme)
+
 Nyria's MCP server lets Claude, ChatGPT, Cursor, Claude Code or any other MCP client send trade alerts to a Nyria strategy. A bot on that strategy places each alert as an order at your broker, such as Charles Schwab, Alpaca, tastytrade, Tradier, Coinbase or Kraken. A bot can also fill it on Nyria Paper, the free simulator. Alert to order, sub-second.
 
 Endpoint: `https://api.nyria.io/mcp` (Streamable HTTP, hosted by Nyria, nothing to install)
@@ -109,6 +111,7 @@ Code can send alerts to a strategy without an MCP client. Every strategy has its
 
 - Webhook: `POST https://trades.nyria.io/webhooks/YOUR_STRATEGY_TOKEN`. See the [webhook payload reference](https://docs.nyria.io/webhook-reference).
 - REST API: base URL `https://api.nyria.io/v1`, with the header `Authorization: Bearer YOUR_STRATEGY_TOKEN`. Routes: `POST /v1/alerts`, `GET /v1/positions`, `GET /v1/orders` and `GET /v1/orders/{order_id}`. See the [REST API docs](https://docs.nyria.io/rest-api).
+- OpenAPI description: [openapi.yaml](openapi.yaml)
 
 ## Building a bot with an AI assistant
 
