@@ -1,0 +1,1226 @@
+openapi: 3.1.0
+info:
+  title: Nyria API
+  version: 1.0.0
+  summary: Send trade alerts to a Nyria strategy. Read its positions, orders and fills.
+  description: |
+    Send a trade alert to a strategy. Read its open positions, orders and fills.
+
+    One token per strategy. Copy it from the strategy's Integration tab. The same token
+    works on the REST API, the webhook and the MCP server.
+
+    Test on Nyria Paper, which is free. A strategy with a live bot places real orders
+    at the connected broker, so send to a paper strategy first.
+
+    Nyria is software, not a broker-dealer or adviser. Trading involves risk of loss.
+
+    Two surfaces are described here:
+
+    - The REST API at `https://api.nyria.io/v1`. It sends an alert and answers with an
+      `order_id` for each order, then reads positions and orders.
+    - The webhook at `https://trades.nyria.io/webhooks/{token}`. It takes alerts from
+      TradingView, scripts and other senders. Its reply carries no order id.
+  termsOfService: https://nyria.io/terms
+  contact:
+    name: Nyria
+    email: contact@nyria.io
+    url: https://nyria.io
+  x-logo:
+    url: https://raw.githubusercontent.com/Nyria-LLC/nyria-mcp/main/logo.png
+    altText: Nyria
+externalDocs:
+  description: Nyria REST API docs
+  url: https://docs.nyria.io/rest-api
+servers:
+  - url: https://api.nyria.io/v1
+    description: Nyria API
+security:
+  - bearerAuth: []
+tags:
+  - name: Alerts
+    description: Send a trade alert to the strategy.
+  - name: Positions
+    description: Open positions on the accounts that run the strategy.
+  - name: Orders
+    description: Recent orders and the fill state of one order.
+  - name: Webhook
+    description: Receive an alert from TradingView or any HTTP sender.
+paths:
+  /alerts:
+    post:
+      tags: [Alerts]
+      operationId: sendAlert
+      summary: Send an alert
+      description: |
+        Sends one alert to the strategy behind the token. Every active bot on the strategy
+        acts on it, including bots on accounts that copy the strategy. On a strategy with a
+        live bot this places real orders.
+
+        Send JSON `{"message": "..."}`, or send the alert as a `text/plain` body. The message
+        is the same text a webhook takes, up to 2000 characters, in a body of at most 16 KB.
+
+        The reply lists an `order_id` for each order the alert created. Pass it to
+        `GET /orders/{order_id}` to see each bot's fill. The list can be empty when the alert
+        is still being recorded. List recent orders a few seconds later.
+
+        An alert cannot set the entry size. The bot's settings set it. A JSON alert may carry
+        order keys such as `order_type`, `stop_price`, `limit_price`, `stop_loss`,
+        `take_profit`, `percent` and `bots`. See the webhook for each key. The parser reads
+        every `order_type`. A broker that cannot place the requested type refuses the alert.
+        Nyria never sends it as a market order.
+
+        The same alert sent twice within two minutes goes out once, and the repeat answers
+        `409`. Sending many alerts in a short time returns 429. To scale into a
+        position, make the message differ.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AlertRequest'
+            examples:
+              entry:
+                summary: Buy SPY
+                value:
+                  message: BUY SPY
+              limitEntry:
+                summary: Limit entry with order keys
+                value:
+                  message: '{"action": "OPEN", "instrument": "SPY", "direction": "LONG", "order_type": "limit", "limit_price": 775}'
+          text/plain:
+            schema:
+              type: string
+              minLength: 1
+              maxLength: 2000
+              description: The whole body is the alert.
+            example: BUY SPY
+      responses:
+        '200':
+          description: Nyria handled the alert. Read `status` for the outcome.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertResult'
+              examples:
+                processed:
+                  summary: Alert reached the bots
+                  value:
+                    status: processed
+                    message: null
+                    live_bots: false
+                    orders:
+                      - order_id: 6f1c2a9e-0000-4000-8000-000000000002
+                        instrument: SPY
+                        action: buy
+                        side: entry
+                        status: open
+                rejected:
+                  summary: Strategy turned the alert down
+                  value:
+                    status: rejected
+                    message: 'Alert ignored: the strategy is paused. Start it to trade its alerts.'
+                    live_bots: false
+                    orders: []
+        '400':
+          description: >-
+            The body is empty or is JSON without a string `message`, or the message is over
+            2000 characters.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                noMessage:
+                  value:
+                    error: 'Send the alert as JSON {"message": "..."} or as plain text.'
+                tooLong:
+                  value:
+                    error: The alert is longer than 2000 characters.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowedPost'
+        '409':
+          description: The same alert went out in the last two minutes.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: This alert was already sent in the last two minutes. Check GET /v1/orders before sending it again.
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          description: >-
+            Nyria could not use the alert, for example unreadable text or an unknown symbol.
+            `error` says why.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: Nyria read this alert but couldn't find the symbol. Add it to the alert message.
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          description: >-
+            The alert may not have gone through. Delivery failed, was not confirmed in time, or
+            could not be processed. Check recent orders before you send again.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                notConfirmed:
+                  value:
+                    error: Delivery was not confirmed. Check GET /v1/orders before sending again.
+                failed:
+                  value:
+                    error: Alert delivery failed. Try again.
+                notProcessed:
+                  value:
+                    error: The alert could not be processed. Check GET /v1/orders before sending again.
+                server:
+                  value:
+                    error: Internal server error
+      x-codeSamples:
+        - lang: Shell
+          label: curl
+          source: |
+            curl -X POST https://api.nyria.io/v1/alerts \
+              -H "Authorization: Bearer YOUR_STRATEGY_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d '{"message": "BUY SPY"}'
+  /positions:
+    get:
+      tags: [Positions]
+      operationId: listPositions
+      summary: List open positions
+      description: |
+        Returns one entry for each of your accounts with a bot on the strategy. Positions
+        cover trades Nyria placed. Trades placed outside Nyria are not listed. Accounts that
+        copy the strategy are not shown. Account numbers show the last 4 digits only.
+
+        An account with nothing open has `"positions": []`. With no bot on the strategy,
+        `accounts` is empty.
+      responses:
+        '200':
+          description: Open positions grouped by account.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PositionsResponse'
+              example:
+                accounts:
+                  - account: '****1234'
+                    broker: Nyria Paper
+                    account_type: paper
+                    positions:
+                      - instrument: BTCUSD
+                        direction: long
+                        quantity: 0.5
+                        average_price: 65000
+                        working_quantity: null
+                        strategy: this
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowedGet'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      x-codeSamples:
+        - lang: Shell
+          label: curl
+          source: |
+            curl https://api.nyria.io/v1/positions \
+              -H "Authorization: Bearer YOUR_STRATEGY_TOKEN"
+  /orders:
+    get:
+      tags: [Orders]
+      operationId: listOrders
+      summary: List recent orders
+      description: |
+        Returns your most recent orders on the strategy, newest first. One order is one
+        bot's order at one broker account. Pass an `order_id` to `GET /orders/{order_id}`
+        for the same order on its own.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: How many orders to return, from 1 to 100.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: Orders, newest first.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrdersResponse'
+              example:
+                orders:
+                  - order_id: 6f1c2a9e-0000-4000-8000-000000000001
+                    broker: nyria-paper
+                    account_type: paper
+                    account: '****1234'
+                    instrument: BTCUSD
+                    action: buy_to_open
+                    side: entry
+                    status: filled
+                    quantity: 0.5
+                    filled_quantity: 0.5
+                    fill_price: 65000
+                    created_at: '2026-10-29T14:30:01.000Z'
+                    updated_at: '2026-10-29T14:30:02.000Z'
+        '400':
+          description: '`limit` is not a whole number from 1 to 100.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: limit must be a whole number from 1 to 100.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowedGet'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      x-codeSamples:
+        - lang: Shell
+          label: curl
+          source: |
+            curl "https://api.nyria.io/v1/orders?limit=20" \
+              -H "Authorization: Bearer YOUR_STRATEGY_TOKEN"
+  /orders/{order_id}:
+    get:
+      tags: [Orders]
+      operationId: getOrder
+      summary: Get an order
+      description: |
+        Returns the fill state of one order. `order_id` comes from `GET /orders`,
+        `POST /alerts` or the MCP `nyria_send_alert` reply.
+
+        An `order_id` from a send names the alert. Then `alert` holds the alert and `orders`
+        lists each of your bots' orders for it. `orders` is empty until the bots place them.
+        An `order_id` from `GET /orders` names one bot's order. Then `alert` is `null` and
+        `orders` holds that order.
+      parameters:
+        - name: order_id
+          in: path
+          required: true
+          description: >-
+            An order id. A malformed id, an unknown id and an id on another strategy all
+            answer `404`.
+          schema:
+            type: string
+          example: 6f1c2a9e-0000-4000-8000-000000000001
+      responses:
+        '200':
+          description: The order and its alert, when the id names an alert.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderStatusResponse'
+              example:
+                alert: null
+                orders:
+                  - order_id: 6f1c2a9e-0000-4000-8000-000000000001
+                    broker: nyria-paper
+                    account_type: paper
+                    account: '****1234'
+                    instrument: BTCUSD
+                    action: buy_to_open
+                    side: entry
+                    status: partially filled
+                    quantity: 0.5
+                    filled_quantity: 0.2
+                    fill_price: 65000
+                    created_at: '2026-10-29T14:30:01.000Z'
+                    updated_at: '2026-10-29T14:30:02.000Z'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: No order with that id on this strategy.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: Order not found.
+        '405':
+          $ref: '#/components/responses/MethodNotAllowedGet'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      x-codeSamples:
+        - lang: Shell
+          label: curl
+          source: |
+            curl https://api.nyria.io/v1/orders/ORDER_ID \
+              -H "Authorization: Bearer YOUR_STRATEGY_TOKEN"
+  /webhooks/{token}:
+    servers:
+      - url: https://trades.nyria.io
+        description: Nyria webhook host
+    post:
+      tags: [Webhook]
+      operationId: receiveWebhook
+      summary: Send an alert by webhook
+      description: |
+        Sends an alert to the strategy that owns the token. The token in the URL is the only
+        authentication. There is no signature header and no IP allowlist. Treat the URL like
+        an API key. If it leaks, select Rotate token on the strategy's Integration tab. The
+        old URL stops working at once.
+
+        The body names a ticker and an action, as JSON like `{"ticker": "SPY", "action": "buy"}`
+        or as plain text like `SPY long entry`. Everything else is optional. The bot's settings
+        set the size of an entry. Nyria ignores a `quantity` or `notional` key on an entry alert.
+
+        A `200` means Nyria read the alert and passed it to your bots. It does not mean a
+        broker filled anything. The reply carries no order id. To get one back, send through
+        `POST /alerts` on the REST API, which takes the same token.
+
+        Nyria drops duplicate alert bodies. If the same body arrives again within 30 seconds,
+        or within 5 minutes with no other alert in between, the repeat answers `200` with
+        `"status": "duplicate"`. Add `metadata.message_id` to give each alert its own identity.
+
+        Alerts that arrive too fast after each other get a 429 and are dropped. Wait for the
+        Retry-After seconds.
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          description: >-
+            The strategy token, a 64-character lowercase hexadecimal string with no prefix. Copy
+            the full webhook URL from the strategy's Integration tab.
+          schema:
+            type: string
+            pattern: '^[a-f0-9]{64}$'
+          example: abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebhookAlert'
+            examples:
+              minimum:
+                summary: Two fields are enough
+                value:
+                  ticker: SPY
+                  action: buy
+              entry:
+                summary: Entry with a direction and order type
+                value:
+                  ticker: AAPL
+                  action: OPEN
+                  direction: LONG
+                  order_type: market
+              limitEntry:
+                summary: Resting limit entry
+                value:
+                  action: OPEN
+                  instrument: BTCUSD
+                  direction: LONG
+                  order_type: limit
+                  price: 64000
+              tradingView:
+                summary: TradingView strategy alert
+                value:
+                  ticker: SPY
+                  action: buy
+                  marketPosition: long
+                  prevMarketPosition: flat
+                  price: 775.25
+              closeHalf:
+                summary: Close half of a position
+                value:
+                  action: CLOSE
+                  instrument: SPY
+                  direction: LONG
+                  percent: 50
+              flatten:
+                summary: Close everything the strategy's bots hold
+                value:
+                  action: FLATTEN
+          text/plain:
+            schema:
+              type: string
+              description: The alert as plain text. A body of only whitespace is empty.
+            examples:
+              entry:
+                summary: Long entry
+                value: SPY long entry
+              closePosition:
+                summary: Close a long
+                value: Close SPY long
+      responses:
+        '200':
+          description: >-
+            Nyria answered the alert. Read `status`, or `rejected` on the strategy-status shape,
+            for the outcome.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookReply'
+              examples:
+                processed:
+                  summary: Alert read and handed to the bots
+                  value:
+                    originalAlert:
+                      ticker: SPY
+                      action: buy
+                    structuredAlert:
+                      instrument: SPY
+                      action: OPEN
+                      direction: LONG
+                    status: processed
+                    webhook: true
+                duplicate:
+                  summary: Body repeats an earlier one
+                  value:
+                    status: duplicate
+                    message: alert already processed for this strategy
+                rejected:
+                  summary: Strategy rules turned the alert down
+                  value:
+                    status: rejected
+                    reason: QQQ isn't one of this strategy's tickers
+                notActive:
+                  summary: Strategy is not Active
+                  value:
+                    message: 'Alert ignored: the strategy is paused. Start it to trade its alerts.'
+                    rejected: true
+        '400':
+          description: The body is empty, or the token in the URL is malformed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookError'
+              examples:
+                emptyBody:
+                  value:
+                    class: USER_ALERT
+                    code: ALERT_EMPTY
+                    userMessage: The alert had no text. Paste an alert to test, or put the alert text in TradingView's Message box.
+                    hint:
+                      field: body
+                    transientRetryable: false
+                badToken:
+                  value:
+                    class: USER_CONFIG
+                    code: INVALID_TOKEN_FORMAT
+                    userMessage: This webhook URL has the wrong format. Copy it again from the strategy's Integration tab.
+                    hint:
+                      field: tokenHash
+                    transientRetryable: false
+        '404':
+          description: No strategy has that token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookError'
+              example:
+                class: USER_CONFIG
+                code: STRATEGY_NOT_FOUND
+                userMessage: Nyria couldn't find a strategy for this webhook URL. Copy the current URL from the strategy's Integration tab.
+                hint:
+                  field: tokenHash
+                transientRetryable: false
+        '413':
+          description: The payload is larger than 256 KB.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookError'
+              example:
+                class: USER_ALERT
+                code: ALERT_TOO_LARGE
+                userMessage: Alerts can be up to 256 KB. Shorten the message.
+                hint:
+                  field: body
+                transientRetryable: false
+        '422':
+          description: >-
+            Nyria could not use the alert, for example a missing field, unreadable text, an
+            unknown symbol, no matching strike or DTE range, or more than 4 option legs.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookError'
+        '429':
+          description: >-
+            The alert came too fast after others. Nyria dropped it. `Retry-After` says how many
+            seconds to wait.
+          headers:
+            Retry-After:
+              description: Whole seconds to wait before the next alert.
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookError'
+              example:
+                class: TRANSIENT
+                code: RATE_LIMITED
+                userMessage: 'Alert dropped: this strategy got alerts faster than its limit. Check for a duplicate or repeating alert.'
+                hint:
+                  field: tokenHash
+                transientRetryable: true
+        '500':
+          description: >-
+            Any other failure, such as a missing `price` when the strategy takes its limit price
+            from the alert. `userMessage` is generic. The strategy's Logs tab has the reason.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookError'
+              example:
+                class: INTERNAL
+                code: INTERNAL_PARSER_ERROR
+                userMessage: Nyria couldn't process this alert because of an internal error.
+                transientRetryable: false
+        '503':
+          description: >-
+            Reading the alert or fetching market data failed for now. Sending the same alert
+            again can succeed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookError'
+      x-codeSamples:
+        - lang: Shell
+          label: curl
+          source: |
+            curl -X POST https://trades.nyria.io/webhooks/YOUR_STRATEGY_TOKEN \
+              -H "Content-Type: application/json" \
+              -d '{"ticker": "AAPL", "action": "OPEN", "direction": "LONG", "order_type": "market"}'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: Strategy token
+      description: >-
+        The strategy's 64-character token from its Integration tab. Send it in the
+        `Authorization: Bearer` header. The API takes the token only in this header, never in
+        the URL. Each token allows 30 requests a minute.
+  headers:
+    CacheControl:
+      description: Always `no-store`.
+      schema:
+        type: string
+        const: no-store
+    RetryAfter:
+      description: Seconds to wait before the next request.
+      schema:
+        type: integer
+  responses:
+    Unauthorized:
+      description: The token is missing, mistyped, rotated or no longer valid.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: Unauthorized
+    MethodNotAllowedGet:
+      description: This route takes `GET` only. The `Allow` header names the method.
+      headers:
+        Allow:
+          description: The method this route takes.
+          schema:
+            type: string
+            const: GET
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: Method not allowed
+    MethodNotAllowedPost:
+      description: This route takes `POST` only. The `Allow` header names the method.
+      headers:
+        Allow:
+          description: The method this route takes.
+          schema:
+            type: string
+            const: POST
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: Method not allowed
+    PayloadTooLarge:
+      description: The body is over 16 KB.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: Request too large
+    TooManyRequests:
+      description: >-
+        Over 30 requests a minute on the token, too many alerts in a short time, too many
+        failed token lookups from one address, or the alert came in a burst. Wait for the
+        `Retry-After` seconds.
+      headers:
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            requests:
+              value:
+                error: Too many requests. Wait a moment and try again.
+            alerts:
+              value:
+                error: Too many alerts sent in the last minute. Wait a minute, then check GET /v1/orders before sending again.
+            burst:
+              value:
+                error: Too many alerts. Wait a moment and try again.
+    InternalError:
+      description: Nyria could not answer the request.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: Internal server error
+  schemas:
+    Error:
+      type: object
+      description: The error shape on every REST route.
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: What went wrong, in plain words.
+    AlertRequest:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          description: >-
+            The alert in the same words a webhook takes, such as `BUY SPY` or
+            `SELL TO CLOSE SPY 450C 12/20`. A JSON alert written as a string may carry order keys.
+          examples: [BUY SPY]
+    AlertResult:
+      type: object
+      required: [status, message, live_bots, orders]
+      properties:
+        status:
+          type: [string, 'null']
+          description: >-
+            How Nyria handled the alert. `processed` means it reached the strategy's bots.
+            `rejected` means the strategy turned it down, for example a ticker not on its list or
+            a strategy that is not Active. `duplicate` means Nyria already had that alert.
+          examples: [processed]
+        message:
+          type: [string, 'null']
+          description: >-
+            The reason when `status` is `rejected`, or a short note when it is `duplicate`.
+            Otherwise `null`.
+        live_bots:
+          type: boolean
+          description: '`true` when a live bot on the strategy may have placed a real order.'
+        orders:
+          type: array
+          description: >-
+            One entry per order the alert created. Pass its `order_id` to
+            `GET /orders/{order_id}` to see each bot's fill. Can be empty while the alert
+            is still being recorded.
+          items:
+            $ref: '#/components/schemas/AlertOrder'
+    AlertOrder:
+      type: object
+      description: One order leg the alert created on the strategy.
+      required: [order_id, instrument, action, side, status]
+      properties:
+        order_id:
+          type: string
+          format: uuid
+        instrument:
+          type: string
+          examples: [SPY]
+        action:
+          type: string
+          description: The order action, such as `buy`, `buy_to_open` or `sell_to_close`.
+        side:
+          type: string
+          enum: [entry, exit]
+        status:
+          type: string
+          description: >-
+            The order leg's state, such as `pending`, `open`, `filled`, `closed`, `cancelled`,
+            `rejected` or `expired`.
+    PositionsResponse:
+      type: object
+      required: [accounts]
+      properties:
+        accounts:
+          type: array
+          description: One entry for each of your accounts with a bot on the strategy.
+          items:
+            $ref: '#/components/schemas/AccountPositions'
+    AccountPositions:
+      type: object
+      required: [account, broker, account_type, positions]
+      properties:
+        account:
+          type: string
+          description: The account number's last 4 digits, such as `****1234`.
+        broker:
+          type: string
+          description: The broker's name, such as `Nyria Paper`.
+        account_type:
+          type: string
+          enum: [paper, live]
+        positions:
+          type: array
+          items:
+            $ref: '#/components/schemas/Position'
+    Position:
+      type: object
+      required: [instrument, direction, quantity, average_price, working_quantity, strategy]
+      properties:
+        instrument:
+          type: string
+          examples: [SPY]
+        direction:
+          type: string
+          description: '`long` or `short`. `unknown` when the direction cannot be read.'
+          enum: [long, short, unknown]
+        quantity:
+          type: number
+          description: The filled quantity.
+        average_price:
+          type: [number, 'null']
+          description: >-
+            The average fill price, weighted by quantity. `null` when nothing has filled.
+        working_quantity:
+          type: [number, 'null']
+          description: The quantity still open at the broker, or `null`.
+        strategy:
+          type: string
+          description: >-
+            `this` for a position from this strategy and `other` for one from another strategy
+            on the same account.
+          enum: [this, other]
+    OrdersResponse:
+      type: object
+      required: [orders]
+      properties:
+        orders:
+          type: array
+          description: Orders, newest first.
+          items:
+            $ref: '#/components/schemas/Order'
+    OrderStatusResponse:
+      type: object
+      required: [alert, orders]
+      properties:
+        alert:
+          description: The alert, when `order_id` names one. Otherwise `null`.
+          oneOf:
+            - $ref: '#/components/schemas/Alert'
+            - type: 'null'
+        orders:
+          type: array
+          description: >-
+            Each of your bots' orders for the alert, or the one order the id names.
+          items:
+            $ref: '#/components/schemas/Order'
+    Alert:
+      type: object
+      description: The alert behind an `order_id` that came from a send.
+      required: [id, instrument, action, side, status, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        instrument:
+          type: string
+        action:
+          type: string
+        side:
+          type: string
+          enum: [entry, exit]
+        status:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    Order:
+      type: object
+      description: One bot's order at one broker account.
+      required:
+        - order_id
+        - broker
+        - account_type
+        - account
+        - instrument
+        - action
+        - side
+        - status
+        - quantity
+        - filled_quantity
+        - fill_price
+        - created_at
+        - updated_at
+      properties:
+        order_id:
+          type: string
+          format: uuid
+        broker:
+          type: string
+          description: The broker code on the order, such as `nyria-paper`.
+        account_type:
+          type: string
+          enum: [paper, live]
+        account:
+          type: string
+          description: The account number's last 4 digits, such as `****1234`.
+        instrument:
+          type: string
+          examples: [BTCUSD]
+        action:
+          type: [string, 'null']
+          description: The order action, such as `buy_to_open` or `sell_to_close`.
+        side:
+          type: string
+          enum: [entry, exit]
+        status:
+          type: string
+          description: >-
+            The order's state, such as `pending`, `open`, `partially filled`, `filled`, `closed`,
+            `cancelled`, `rejected`, `expired` or `unconfirmed`.
+        quantity:
+          type: [number, 'null']
+          description: The quantity ordered.
+        filled_quantity:
+          type: number
+          description: The quantity filled so far.
+        fill_price:
+          type: [number, 'null']
+          description: The fill price once any quantity has filled, otherwise `null`.
+        created_at:
+          type: string
+          format: date-time
+          description: UTC.
+        updated_at:
+          type: string
+          format: date-time
+          description: UTC.
+    WebhookAlert:
+      type: object
+      description: >-
+        A JSON alert. A ticker and an action are enough. Every other field is optional. Send one
+        only to state what the strategy cannot work out, or to override its settings for one
+        alert. Nyria ignores a `quantity` or `notional` key on an entry alert.
+      properties:
+        ticker:
+          type: string
+          description: The ticker, such as `SPY` or `BTCUSD`. `ticker`, `instrument` and `symbol` mean the same thing.
+          examples: [SPY]
+        instrument:
+          type: string
+          description: Same as `ticker`.
+        symbol:
+          type: string
+          description: Same as `ticker`.
+        action:
+          type: string
+          description: >-
+            `OPEN` or `CLOSE` for entries and exits, `MODIFY` or `CANCEL` for order management, or
+            `FLATTEN` to close everything the strategy's bots hold. Nyria also accepts and maps
+            `buy`, `sell`, `entry` and `exit`. `MODIFY` works on Alpaca and Tradier. Schwab and
+            tastytrade refuse it.
+          examples: [OPEN]
+        direction:
+          type: string
+          description: '`LONG` or `SHORT`. Send it with `OPEN` and `CLOSE`.'
+          examples: [LONG]
+        price:
+          type: number
+          description: >-
+            Limit price as a decimal, used when `order_type` is `limit` or the strategy's limit
+            target is Alert price.
+        order_type:
+          type: string
+          enum: [market, limit, stop, stop_limit, trailing_stop]
+          description: >-
+            The parser accepts each value. Nyria reads it on an alert that names `action` and
+            `direction`, and on a plain `buy` or `sell` for a stock, ETF or crypto ticker. On
+            other alerts it uses the strategy's order type. A broker or account that cannot
+            place this order form refuses the alert; it is never sent as a market order.
+        stop_price:
+          type: number
+          exclusiveMinimum: 0
+          description: >-
+            The trigger for `stop` and `stop_limit`. Required for both. The parser accepts it.
+            A broker or account that cannot place this order form refuses the alert; it is never
+            sent as a market order.
+        limit_price:
+          type: number
+          exclusiveMinimum: 0
+          description: >-
+            The limit for `stop_limit`. Required there. On `limit`, it wins over `price`. The
+            parser accepts it. A broker or account that cannot place this order form refuses the
+            alert; it is never sent as a market order.
+        trail_percent:
+          type: number
+          exclusiveMinimum: 0
+          maximum: 50
+          description: >-
+            The trail for `trailing_stop`, as a percent. Alpaca needs 0.1 or more. Send one trail
+            key, not both. The parser accepts it. A broker or account that cannot place this
+            order form refuses the alert; it is never sent as a market order.
+        trail_amount:
+          type: number
+          exclusiveMinimum: 0
+          description: >-
+            The trail for `trailing_stop`, as a price amount. Send one trail key, not both. The
+            parser accepts it. A broker or account that cannot place this order form refuses the
+            alert; it is never sent as a market order.
+        stop_loss:
+          description: >-
+            Attaches a stop loss to the entry, as a price or a percent string such as `"2%"` (up
+            to 50). A percent is measured from the entry price. For stocks, ETFs and options
+            only. Nyria refuses it on crypto and sends nothing. Tradier needs a limit or stop
+            entry. The parser accepts it. A broker or account that cannot place this order form
+            refuses the alert; it is never sent as a market order.
+          oneOf:
+            - type: number
+              exclusiveMinimum: 0
+            - type: string
+              pattern: '^[0-9]+(\.[0-9]+)?%$'
+          examples: ['2%']
+        stop_loss_limit:
+          description: >-
+            Makes the stop loss a stop-limit, as a price or a percent string. The parser accepts
+            it. A broker or account that cannot place this order form refuses the alert; it is
+            never sent as a market order.
+          oneOf:
+            - type: number
+              exclusiveMinimum: 0
+            - type: string
+              pattern: '^[0-9]+(\.[0-9]+)?%$'
+        take_profit:
+          description: >-
+            Attaches a take profit to the entry, as a price or a percent string (up to 1000). For
+            stocks, ETFs and options only. Nyria refuses it on crypto and sends nothing. The
+            parser accepts it. A broker or account that cannot place this order form refuses the
+            alert; it is never sent as a market order.
+          oneOf:
+            - type: number
+              exclusiveMinimum: 0
+            - type: string
+              pattern: '^[0-9]+(\.[0-9]+)?%$'
+          examples: ['6%']
+        percent:
+          type: number
+          exclusiveMinimum: 0
+          maximum: 100
+          description: >-
+            Exit only. Closes that share of the bot's position and leaves the rest open. A later
+            exit or `FLATTEN` closes the rest. Options refuse a percent below 100. A broker that
+            cannot place the close refuses the alert. A percent close cancels the trade's working
+            stop and target.
+        bots:
+          type: array
+          minItems: 1
+          maxItems: 20
+          description: >-
+            Sends the alert to those bots only. The first 8 characters of a bot id are enough.
+            Works on any action.
+          items:
+            type: string
+            minLength: 8
+        marketPosition:
+          type: string
+          enum: [long, short, flat]
+          description: >-
+            TradingView's `{{strategy.market_position}}`. Send it with `prevMarketPosition` and
+            Nyria works out the action and direction from the change.
+        prevMarketPosition:
+          type: string
+          enum: [long, short, flat]
+          description: TradingView's `{{strategy.prev_market_position}}`.
+        legs:
+          type: array
+          maxItems: 4
+          description: >-
+            Option legs, one entry per leg. For a strategy whose contract selection is Provided
+            in alert. On a From my rules strategy, leave it out.
+          items:
+            $ref: '#/components/schemas/WebhookLeg'
+        metadata:
+          type: object
+          description: Extra data that travels with the alert.
+          properties:
+            message_id:
+              type: string
+              description: >-
+                An id that is unique per alert, such as the bar time. Nyria compares it to spot
+                duplicates. Without it, Nyria compares a hash of the whole body.
+      additionalProperties: true
+    WebhookLeg:
+      type: object
+      description: One option leg.
+      properties:
+        symbol:
+          type: string
+          description: OCC option symbol, such as `SPY261120C00780000`.
+        side:
+          type: string
+          enum: [CALL, PUT]
+        action:
+          type: string
+          enum: [buy_to_open, sell_to_open, buy_to_close, sell_to_close]
+          description: >-
+            On an entry, give every leg its own. A leg without one follows the alert's
+            `direction`.
+        strike:
+          type: number
+          examples: [780]
+        expiration:
+          type: string
+          description: '`YYYY-MM-DD`. Give it, or the leg''s `symbol`, on every entry leg.'
+          examples: ['2026-11-20']
+        price:
+          type: number
+          description: Limit price for this leg. For a limit spread, the leg prices add up to the spread price.
+        live_price:
+          type: number
+          description: Live bid or ask price for this leg.
+    WebhookReply:
+      description: >-
+        The webhook answers `200` in one of four shapes. None carries an order id.
+      oneOf:
+        - $ref: '#/components/schemas/WebhookProcessed'
+        - $ref: '#/components/schemas/WebhookDuplicate'
+        - $ref: '#/components/schemas/WebhookRejected'
+        - $ref: '#/components/schemas/WebhookNotActive'
+    WebhookProcessed:
+      type: object
+      description: Nyria read the alert and handed it to your bots.
+      required: [originalAlert, structuredAlert, status, webhook]
+      properties:
+        originalAlert:
+          description: The alert as it arrived. A string for a text body, an object for a JSON body.
+          type: [string, object]
+        structuredAlert:
+          type: object
+          description: The alert as Nyria read it. Holds keys such as `instrument`, `action` and `direction`, plus any order keys the alert carried.
+          additionalProperties: true
+        status:
+          type: string
+          const: processed
+        webhook:
+          type: boolean
+          const: true
+    WebhookDuplicate:
+      type: object
+      description: The body repeats an earlier one inside the duplicate window.
+      required: [status, message]
+      properties:
+        status:
+          type: string
+          const: duplicate
+        message:
+          type: string
+          examples: [alert already processed for this strategy]
+    WebhookRejected:
+      type: object
+      description: >-
+        The ticker is not in the strategy's list, that direction is turned off, or there is no
+        open position to close.
+      required: [status, reason]
+      properties:
+        status:
+          type: string
+          const: rejected
+        reason:
+          type: string
+    WebhookNotActive:
+      type: object
+      description: The strategy is not Active. It is a draft, paused or deleted.
+      required: [message, rejected]
+      properties:
+        message:
+          type: string
+        rejected:
+          type: boolean
+          const: true
+    WebhookError:
+      type: object
+      description: >-
+        A structured error. `class` says whose side the fault is on. `code` is stable and
+        machine readable.
+      required: [class, code, userMessage, transientRetryable]
+      properties:
+        class:
+          type: string
+          enum: [USER_CONFIG, USER_ALERT, TRANSIENT, INTERNAL]
+          description: >-
+            `USER_CONFIG` means the webhook URL or strategy setup is wrong. `USER_ALERT` means the
+            alert itself is wrong. `TRANSIENT` means a temporary failure that can pass on a retry.
+            `INTERNAL` means a fault on Nyria's side.
+        code:
+          type: string
+          description: >-
+            A stable error code, such as `STRATEGY_NOT_FOUND`, `INVALID_TOKEN_FORMAT`,
+            `ALERT_EMPTY`, `ALERT_TOO_LARGE`, `ALERT_UNPARSEABLE`, `ALERT_MISSING_FIELD`,
+            `ALERT_SYMBOL_UNKNOWN`, `INSTRUMENT_NOT_ALLOWED`, `RATE_LIMITED` or
+            `INTERNAL_PARSER_ERROR`. New codes can be added.
+        userMessage:
+          type: string
+          description: >-
+            A sentence safe to show a person, with the next step when there is one. The wording
+            can change; match on code.
+        hint:
+          type: object
+          description: The field the sender can change, when there is one.
+          properties:
+            field:
+              type: string
+            suggestedValue: {}
+            alternateRange:
+              type: array
+              items:
+                type: integer
+            example:
+              type: string
+        transientRetryable:
+          type: boolean
+          description: '`true` when sending the same alert again may succeed.'
