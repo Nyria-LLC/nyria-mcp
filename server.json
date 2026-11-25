@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.Nyria-LLC/nyria",
   "title": "Nyria",
-  "description": "Nyria's remote MCP server at api.nyria.io/mcp lets AI agents preview and send trade alerts. Nyria turns each alert into an order at your own broker. It covers stocks, options, futures, crypto spot and perps. Works with Claude, ChatGPT and Cursor. Start on Nyria Paper, free.",
+  "description": "Send trade alerts from AI agents to your broker: stocks, options, futures, crypto and perps.",
   "version": "1.0.1",
   "repository": {
     "url": "https://github.com/Nyria-LLC/nyria-mcp",
