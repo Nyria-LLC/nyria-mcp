@@ -99,11 +99,14 @@ The bot sets the order size. Nyria places market and limit orders, and exits are
 
 ## Brokers
 
-A bot places orders for stocks, options and crypto at the broker it runs on.
+A bot places orders for stocks, options, futures, crypto spot and perps at the broker it runs on.
 
-- Live: Binance, Coinbase, OKX, MEXC, Charles Schwab, Alpaca, Kraken, Hyperliquid, Kraken Futures, tastytrade, Tradier, My Funded Perps
-- Beta: Webull, Robinhood (unofficial), Robinhood Crypto, E*TRADE, Gemini, Binance US, Coinbase US
+- Stocks and options: Alpaca, Charles Schwab, tastytrade, Tradier
+- Futures: tastytrade, Tradovate
+- Crypto spot: Alpaca, Binance, Coinbase, Kraken, MEXC, OKX
+- Perps: Hyperliquid, Kraken Futures, My Funded Perps
 - Nyria Paper: the free simulator, with no broker needed
+- Also connecting: Webull, Robinhood, Robinhood Crypto, E*TRADE, Gemini, Binance US, Coinbase US
 
 ## Webhook and REST API
 
